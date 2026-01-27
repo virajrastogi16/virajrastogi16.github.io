@@ -22,7 +22,7 @@ try:
     df = load_data()
     st.success("Data successfully loaded!")
 except:
-    st.error("Could not find 'final_predictions.csv'. Please run the previous notebook steps first!")
+    st.error("Could not find 'final_predictions.csv.zip'. Please run the previous notebook steps first!")
     st.stop()
 
 # --- 2. THE SIDEBAR (The Control Center) ---
