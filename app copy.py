@@ -4,22 +4,40 @@ import shap
 import matplotlib.pyplot as plt
 import xgboost as xgb
 import numpy as np
+import zipfile  # <--- Added to handle Mac zip files
 
 # --- 1. SETUP & DATA LOADING ---
 st.set_page_config(page_title="SmokeSignal AI", layout="wide")
 
 @st.cache_data
 def load_data():
-    # Load your results (Looking for 'data.zip' specifically)
-    # Ensure the file on GitHub is named exactly "data.zip"
-    df = pd.read_csv("data.zip")
+    # We use zipfile to ignore the hidden __MACOSX folder that Mac creates
+    try:
+        with zipfile.ZipFile("data.zip", "r") as z:
+            # Get list of all files inside the zip
+            all_files = z.namelist()
+            # Filter: Find the file that ends with .csv and is NOT the Mac hidden folder
+            csv_files = [f for f in all_files if f.endswith('.csv') and not f.startswith('__MACOSX')]
+            
+            if not csv_files:
+                st.error("Error: No CSV file found inside data.zip")
+                st.stop()
+            
+            # Pick the first valid CSV file found (e.g., 'final_predictions_full copy.csv')
+            target_file = csv_files[0]
+            
+            # Open that specific file
+            with z.open(target_file) as f:
+                df = pd.read_csv(f)
+    except FileNotFoundError:
+        st.error("CRITICAL ERROR: Could not find 'data.zip'. Please check GitHub file list.")
+        st.stop()
     
     # Create a friendly "Location" label combining Lat/Lon
-    # We force Lat/Lon to string to avoid errors if they are interpreted as numbers
+    # Force Lat/Lon to string to avoid errors
     df['Location_Label'] = df['Lat'].astype(str) + ", " + df['Lon'].astype(str)
     
     # Ensure Date column is standard datetime
-    # If 'Date' is missing, this handles it gracefully
     if 'Date' in df.columns:
         df['Date'] = pd.to_datetime(df['Date'])
     else:
@@ -27,14 +45,10 @@ def load_data():
         
     return df
 
-# Main Data Loading Block with explicit error handling
+# Main Data Loading Block
 try:
     df = load_data()
     st.sidebar.success("Data System: Online ✅")
-except FileNotFoundError:
-    st.error("CRITICAL ERROR: Could not find 'data.zip'.")
-    st.warning("Please check your GitHub repository. The file must be named exactly 'data.zip'.")
-    st.stop()
 except Exception as e:
     st.error(f"An unexpected error occurred: {e}")
     st.stop()
