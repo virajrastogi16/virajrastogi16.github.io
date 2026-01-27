@@ -4,3 +4,4 @@ plotly
 numpy
 xgboost
 shap
+matplotlib
