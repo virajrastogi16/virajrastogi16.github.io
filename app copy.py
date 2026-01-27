@@ -9,10 +9,11 @@ import numpy as np
 # --- 1. SETUP & DATA LOADING ---
 st.set_page_config(page_title="SmokeSignal AI", layout="wide")
 
+
 @st.cache_data
 def load_data():
     # Load your results (adjust path if needed)
-    df = pd.read_csv("final_predictions_full copy.csv.zip")
+    df = pd.read_csv("data.zip")
     # Create a friendly "Location" label combining Lat/Lon
     df['Location_Label'] = df['Lat'].astype(str) + ", " + df['Lon'].astype(str)
     df['Date'] = pd.to_datetime(df.get('Date', '2023-01-01')) # Ensure Date exists
