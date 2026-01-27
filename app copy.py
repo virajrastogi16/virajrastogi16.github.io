@@ -1,4 +1,3 @@
-
 import streamlit as st
 import pandas as pd
 import shap
@@ -9,21 +8,35 @@ import numpy as np
 # --- 1. SETUP & DATA LOADING ---
 st.set_page_config(page_title="SmokeSignal AI", layout="wide")
 
-
 @st.cache_data
 def load_data():
-    # Load your results (adjust path if needed)
+    # Load your results (Looking for 'data.zip' specifically)
+    # Ensure the file on GitHub is named exactly "data.zip"
     df = pd.read_csv("data.zip")
+    
     # Create a friendly "Location" label combining Lat/Lon
+    # We force Lat/Lon to string to avoid errors if they are interpreted as numbers
     df['Location_Label'] = df['Lat'].astype(str) + ", " + df['Lon'].astype(str)
-    df['Date'] = pd.to_datetime(df.get('Date', '2023-01-01')) # Ensure Date exists
+    
+    # Ensure Date column is standard datetime
+    # If 'Date' is missing, this handles it gracefully
+    if 'Date' in df.columns:
+        df['Date'] = pd.to_datetime(df['Date'])
+    else:
+        st.error("Column 'Date' not found in the CSV.")
+        
     return df
 
+# Main Data Loading Block with explicit error handling
 try:
     df = load_data()
-    st.success("Data successfully loaded!")
-except:
-    st.error("Could not find 'final_predictions.csv.zip'. Please run the previous notebook steps first!")
+    st.sidebar.success("Data System: Online ✅")
+except FileNotFoundError:
+    st.error("CRITICAL ERROR: Could not find 'data.zip'.")
+    st.warning("Please check your GitHub repository. The file must be named exactly 'data.zip'.")
+    st.stop()
+except Exception as e:
+    st.error(f"An unexpected error occurred: {e}")
     st.stop()
 
 # --- 2. THE SIDEBAR (The Control Center) ---
@@ -38,12 +51,16 @@ selected_loc = st.sidebar.selectbox("Select Monitor Location:", unique_locations
 loc_data = df[df['Location_Label'] == selected_loc]
 
 # Select Date
-min_date = loc_data['Date'].min()
-max_date = loc_data['Date'].max()
-selected_date = st.sidebar.date_input("Select Date:", min_value=min_date, max_value=max_date, value=min_date)
-
-# Get specific row for that day
-specific_day = loc_data[loc_data['Date'].dt.date == selected_date]
+if not loc_data.empty:
+    min_date = loc_data['Date'].min()
+    max_date = loc_data['Date'].max()
+    selected_date = st.sidebar.date_input("Select Date:", min_value=min_date, max_value=max_date, value=min_date)
+    
+    # Get specific row for that day
+    specific_day = loc_data[loc_data['Date'].dt.date == selected_date]
+else:
+    st.warning("No data available for this location.")
+    st.stop()
 
 # --- 3. MAIN DASHBOARD ---
 st.title("🌲 SmokeSignal: AI Wildfire Forecaster")
@@ -51,9 +68,10 @@ st.title("🌲 SmokeSignal: AI Wildfire Forecaster")
 # METRICS ROW
 col1, col2, col3 = st.columns(3)
 if not specific_day.empty:
-    pred = specific_day.iloc[0]['Predicted_PM25']
-    actual = specific_day.iloc[0]['Actual_PM25']
-    error = specific_day.iloc[0]['Error']
+    # Use .get() to avoid errors if columns are missing
+    pred = specific_day.iloc[0].get('Predicted_PM25', 0)
+    actual = specific_day.iloc[0].get('Actual_PM25', 0)
+    error = specific_day.iloc[0].get('Error', 0)
     
     col1.metric("Predicted Air Quality (PM2.5)", f"{pred:.1f}")
     col2.metric("Actual Air Quality", f"{actual:.1f}", delta=f"{error:.1f} error", delta_color="inverse")
@@ -67,7 +85,9 @@ else:
 
 # VISUAL 1: PERFORMANCE CHART
 st.subheader("📉 Actual vs. Predicted (Time Series)")
-st.line_chart(loc_data.set_index("Date")[['Actual_PM25', 'Predicted_PM25']])
+if not loc_data.empty:
+    chart_data = loc_data.set_index("Date")[['Actual_PM25', 'Predicted_PM25']]
+    st.line_chart(chart_data)
 
 # --- 4. EXPLAINABILITY & MAP (The "Why") ---
 st.divider()
@@ -75,17 +95,17 @@ col_map, col_explain = st.columns([1, 1])
 
 with col_map:
     st.subheader("📍 Monitor Location")
-    # Streamlit needs 'lat' and 'lon' columns exactly named
-    map_data = loc_data[['Lat', 'Lon']].rename(columns={'Lat': 'lat', 'Lon': 'lon'})
+    # Streamlit needs 'lat' and 'lon' columns exactly named (case sensitive)
+    # We create a copy to avoid SettingWithCopy warnings
+    map_data = loc_data[['Lat', 'Lon']].copy()
+    map_data = map_data.rename(columns={'Lat': 'lat', 'Lon': 'lon'})
     st.map(map_data.iloc[[0]]) # Show just the one point
 
 with col_explain:
     st.subheader("🤖 Why is the air bad?")
     
     if not specific_day.empty:
-        # NOTE: In a real app, you would load the full 'explainer' object.
-        # For this demo, we simulate the logic based on your 'Smoke_Yesterday' feature.
-        
+        # Simulate explainability based on features
         smoke_val = specific_day.iloc[0].get('Smoke_Yesterday', 0)
         velocity_val = specific_day.iloc[0].get('Velocity_Yesterday', 0)
         
