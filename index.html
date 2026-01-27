@@ -1,35 +1,169 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>West Coast SmokeSignal</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>West Coast SmokeSignal | AI Wildfire Forecasting</title>
     <style>
-        body { font-family: sans-serif; max-width: 800px; margin: 0 auto; padding: 40px; line-height: 1.6; color: #333; }
-        h1 { color: #d32f2f; }
-        .button { background-color: #d32f2f; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; }
-        .video-container { margin: 20px 0; border: 1px solid #ddd; padding: 10px; }
+        /* MODERN CSS RESET & STYLES */
+        :root {
+            --primary-color: #d32f2f; /* Fire Red */
+            --secondary-color: #333;
+            --bg-color: #f8f9fa;
+            --text-color: #2c3e50;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            color: var(--text-color);
+            margin: 0;
+            padding: 0;
+            background-color: var(--bg-color);
+        }
+
+        /* HERO SECTION */
+        .hero {
+            background: white;
+            padding: 80px 20px;
+            text-align: center;
+            border-bottom: 1px solid #eaeaea;
+        }
+
+        .hero h1 {
+            font-size: 3rem;
+            margin-bottom: 10px;
+            color: var(--secondary-color);
+        }
+
+        .hero span {
+            color: var(--primary-color);
+        }
+
+        .hero p {
+            font-size: 1.25rem;
+            color: #666;
+            max-width: 600px;
+            margin: 0 auto 40px auto;
+        }
+
+        /* BUTTONS */
+        .button-container {
+            display: flex;
+            justify-content: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 15px 30px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            text-decoration: none;
+            border-radius: 8px;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .btn-primary {
+            background-color: var(--primary-color);
+            color: white;
+            border: 2px solid var(--primary-color);
+        }
+
+        .btn-secondary {
+            background-color: white;
+            color: var(--secondary-color);
+            border: 2px solid #ddd;
+        }
+
+        /* CONTENT SECTIONS */
+        .container {
+            max-width: 900px;
+            margin: 60px auto;
+            padding: 0 20px;
+        }
+
+        h2 {
+            border-bottom: 2px solid var(--primary-color);
+            padding-bottom: 10px;
+            margin-top: 50px;
+            display: inline-block;
+        }
+
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 30px;
+            margin-top: 30px;
+        }
+
+        .feature-card {
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+
+        .feature-card h3 { margin-top: 0; color: var(--primary-color); }
+
+        footer {
+            text-align: center;
+            padding: 40px;
+            color: #888;
+            font-size: 0.9rem;
+            margin-top: 60px;
+            border-top: 1px solid #eaeaea;
+        }
     </style>
 </head>
 <body>
-    <h1>🌲 West Coast SmokeSignal</h1>
-    <h3>AI-Powered Air Quality Forecasting</h3>
-    
-    <p><strong>Problem:</strong> Hazardous air quality affects millions, but current tools only show current data, not future risks.</p>
-    
-    <p><strong>Solution:</strong> SmokeSignal uses a "Digital Twin" approach, fusing satellite data with ground sensors to forecast pollution before it hits.</p>
 
-    <div class="video-container">
-        <h3>Project Video</h3>
-        <p>[Video Embed Goes Here]</p>
+    <div class="hero">
+        <h1>🌲 West Coast <span>SmokeSignal</span></h1>
+        <p>AI-Powered Air Quality Forecasting using "Digital Twin" satellite fusion technology.</p>
+        
+        <div class="button-container">
+            <a href="https://virajrastogi16.streamlit.app/" class="btn btn-primary">🚀 Launch Live Dashboard</a>
+            
+            <a href="https://github.com/virajrastogi16/virajrastogi16.github.io" class="btn btn-secondary">View Source Code</a>
+        </div>
     </div>
 
-    <h2>Key Features</h2>
-    <ul>
-        <li><strong>Physics-Aware AI:</strong> Calculates pollution velocity to detect wildfires instantly.</li>
-        <li><strong>Explainability:</strong> Uses SHAP values to tell you <em>why</em> the air is bad.</li>
-        <li><strong>Dual-Layer Protection:</strong> 99.5% accuracy in flagging hazardous days.</li>
-    </ul>
+    <div class="container">
+        
+        <h2>The Problem</h2>
+        <p><strong>Wildfire smoke is a silent killer.</strong> Hazardous air quality affects millions of people, yet current tools only show data for <em>right now</em>. There is no reliable "weather forecast" for smoke 24 hours in advance.</p>
 
-    <br>
-    <a href="https://github.com/virajrastogi16/virajrastogi16.github.io" class="button">View Source Code on GitHub</a>
+        <h2>The Solution</h2>
+        <p>SmokeSignal uses a physics-aware AI approach. It fuses real-time satellite imagery with ground sensor networks to calculate pollution velocity and predict hazardous air quality events before they arrive.</p>
+
+        <h2>Key Features</h2>
+        <div class="feature-grid">
+            <div class="feature-card">
+                <h3>Physics-Aware AI</h3>
+                <p>Calculates the physical velocity of smoke plumes to detect rapid wildfire spread instantly.</p>
+            </div>
+            <div class="feature-card">
+                <h3>XAI Explainability</h3>
+                <p>Uses SHAP values to explain <em>why</em> a prediction was made, building trust with users.</p>
+            </div>
+            <div class="feature-card">
+                <h3>Dual-Layer Data</h3>
+                <p>Combines satellite inputs with ground sensors for 99.5% accuracy in flagging hazardous days.</p>
+            </div>
+        </div>
+
+    </div>
+
+    <footer>
+        <p>Created by Viraj Rastogi | Powered by Streamlit, XGBoost & Python</p>
+    </footer>
+
 </body>
 </html>
