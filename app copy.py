@@ -5,7 +5,7 @@ import zipfile
 import altair as alt
 import pydeck as pdk
 
-# --- 1. PAGE CONFIGURATION ---
+# --- 1. PAGE CONFIGURATION (Must be first) ---
 st.set_page_config(
     page_title="SmokeSignal AI",
     page_icon="🌲",
@@ -13,11 +13,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. DATA LOADING (Robust & Safe) ---
+# --- 2. DATA LOADING & CLEANING ---
 @st.cache_data
 def load_data():
     try:
-        # Open zip file
+        # Robust Zip Loader
         with zipfile.ZipFile("data.zip", "r") as z:
             all_files = z.namelist()
             csv_files = [f for f in all_files if f.endswith('.csv') and not f.startswith('__MACOSX')]
@@ -26,46 +26,38 @@ def load_data():
                 st.error("Error: No CSV file found inside data.zip")
                 st.stop()
             
-            # Load CSV
             with z.open(csv_files[0]) as f:
                 df = pd.read_csv(f)
                 
     except FileNotFoundError:
-        st.error("CRITICAL ERROR: 'data.zip' not found. Please upload it to GitHub.")
+        st.error("CRITICAL ERROR: 'data.zip' not found on GitHub. Please upload it.")
         st.stop()
 
-    # --- CRITICAL FIX: CLEAN COLUMN NAMES ---
-    # Remove invisible spaces from column names (Fixes the ValueError)
-    df.columns = df.columns.str.strip()
+    # --- CLEANING ---
+    df.columns = df.columns.str.strip() # Remove spaces from column names
 
-    # --- PREPROCESSING ---
     # 1. Date Parsing
     if 'Date' in df.columns:
         df['Date'] = pd.to_datetime(df['Date'])
     else:
-        st.error("❌ Column 'Date' is missing from the dataset. Check your CSV.")
+        st.error("❌ 'Date' column missing.")
         st.stop()
 
-    # 2. Location & State
-    # Ensure Lat/Lon are numeric (Fixes Map Invisible Issue)
+    # 2. Location Cleaning (Drop invalid rows)
     df['Lat'] = pd.to_numeric(df['Lat'], errors='coerce')
     df['Lon'] = pd.to_numeric(df['Lon'], errors='coerce')
-    
-    # Drop rows with invalid coordinates to prevent Map crash
     df = df.dropna(subset=['Lat', 'Lon'])
 
     df['Location_Label'] = df['Lat'].astype(str) + ", " + df['Lon'].astype(str)
     
-    state_map = {
-        6: 'California (CA)', 41: 'Oregon (OR)', 53: 'Washington (WA)', 
-        32: 'Nevada (NV)', 4: 'Arizona (AZ)'
-    }
+    # 3. State Mapping
+    state_map = {6:'California (CA)', 41:'Oregon (OR)', 53:'Washington (WA)', 32:'Nevada (NV)', 4:'Arizona (AZ)'}
     if 'State_ID' in df.columns:
         df['State_Name'] = df['State_ID'].map(state_map).fillna('Other')
     else:
         df['State_Name'] = 'All Regions'
 
-    # 3. Error Calculation
+    # 4. Error Metrics
     if 'Actual_PM25' in df.columns and 'Predicted_PM25' in df.columns:
         df['Error'] = df['Actual_PM25'] - df['Predicted_PM25']
         df['Absolute_Error'] = df['Error'].abs()
@@ -75,227 +67,185 @@ def load_data():
 try:
     df = load_data()
 except Exception as e:
-    st.error(f"Data Loading Failed: {e}")
+    st.error(f"Data Error: {e}")
     st.stop()
 
 # --- 3. SIDEBAR CONTROLS ---
-st.sidebar.title("🔍 Regional Controls")
+st.sidebar.title("🔍 Controls")
 
-# DEBUGGER: Show user if data is empty
-if df.empty:
-    st.sidebar.error("⚠️ The dataset is empty!")
-    st.stop()
-
-# A. Date Selection
-min_date = df['Date'].min()
-max_date = df['Date'].max()
-
-# Default to the most recent date to ensure we see data
-selected_date = st.sidebar.date_input(
-    "Select Analysis Date:",
-    min_value=min_date,
-    max_value=max_date,
-    value=max_date 
-)
-
-# Filter by Date
-day_data = df[df['Date'].dt.date == selected_date]
+# A. Date Filter (Default to LATEST to ensure visibility)
+min_d, max_d = df['Date'].min(), df['Date'].max()
+selected_date = st.sidebar.date_input("Analysis Date:", value=max_d, min_value=min_d, max_value=max_d)
 
 # B. State Filter
 state_options = ['All'] + sorted(df['State_Name'].unique().tolist())
 selected_state = st.sidebar.selectbox("Filter by State:", state_options)
 
+# Filter Logic
+day_data = df[df['Date'].dt.date == selected_date]
 if selected_state != 'All':
     filtered_data = day_data[day_data['State_Name'] == selected_state]
 else:
     filtered_data = day_data
 
-# C. Sensor Selection
+if filtered_data.empty:
+    st.warning("No data for these filters. Try a different date.")
+    st.stop()
+
+# C. Sensor Selector
 sensor_options = filtered_data['Location_Label'].unique()
 sensor_row = None
-
 if len(sensor_options) > 0:
-    selected_sensor = st.sidebar.selectbox("Select Specific Sensor:", sensor_options)
-    sensor_subset = filtered_data[filtered_data['Location_Label'] == selected_sensor]
-    if not sensor_subset.empty:
-        sensor_row = sensor_subset.iloc[0]
-else:
-    if not day_data.empty:
-        st.sidebar.warning(f"No sensors found in {selected_state} on this date.")
-    else:
-        st.sidebar.warning(f"No data available for {selected_date}.")
+    selected_sensor = st.sidebar.selectbox("Select Sensor:", sensor_options)
+    sensor_row = filtered_data[filtered_data['Location_Label'] == selected_sensor].iloc[0]
 
-# --- 4. MAIN DASHBOARD ---
+# --- 4. MAIN HEADER ---
 st.title("🌲 West Coast SmokeSignal: Wildfire AI")
-st.markdown(f"### Tracking PM2.5 Levels across **{len(filtered_data)}** active sensors")
+st.markdown(f"**Tracking {len(filtered_data)} sensors on {selected_date}**")
 
-# Top Metrics
+# Metrics Row
 if sensor_row is not None:
     pred = sensor_row.get('Predicted_PM25', 0)
     actual = sensor_row.get('Actual_PM25', 0)
-    velocity = sensor_row.get('Velocity_Yesterday', 0)
     
-    if pred > 35: status, s_color = "🚨 HAZARDOUS", "red"
-    elif pred > 12: status, s_color = "⚠️ MODERATE", "orange"
-    else: status, s_color = "✅ SAFE", "green"
+    if pred > 35: status, s_color = "HAZARDOUS", "red"
+    elif pred > 12: status, s_color = "MODERATE", "orange"
+    else: status, s_color = "SAFE", "green"
 
     c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Predicted PM2.5", f"{pred:.1f} µg/m³")
-    c2.metric("Actual PM2.5", f"{actual:.1f} µg/m³", delta=f"{actual-pred:.1f}")
-    c3.metric("Pollution Velocity", f"{velocity:.2f}")
-    c4.markdown(f"### Status: :{s_color}[{status}]")
+    c1.metric("Predicted PM2.5", f"{pred:.1f}")
+    c2.metric("Actual PM2.5", f"{actual:.1f}", delta=f"{actual-pred:.1f}")
+    c3.metric("Pollution Velocity", f"{sensor_row.get('Velocity_Yesterday', 0):.2f}")
+    c4.markdown(f"### :{s_color}[{status}]")
 
 st.divider()
 
-# --- 5. TABS ---
-tab_map, tab_explain, tab_diag = st.tabs(["🌍 Regional Map", "🤖 Explainability", "📊 Model Diagnostics"])
+# --- 5. TABS INTERFACE ---
+tab_map, tab_explain, tab_diag = st.tabs(["🌍 Regional Map", "🤖 Explainability", "📊 Diagnostics"])
 
-# TAB 1: MAP (Fixed Visibility)
+# ================= TAB 1: MAP (FIXED) =================
 with tab_map:
-    st.subheader(f"Regional Air Quality Map ({selected_date})")
+    st.subheader("Regional Air Quality Map")
     
     if not filtered_data.empty:
-        # Check for NaN values in Lat/Lon again just to be safe
-        map_data = filtered_data.dropna(subset=['Lat', 'Lon', 'Predicted_PM25'])
+        # Dynamic Colors
+        def get_color(val):
+            if val < 12: return [0, 128, 0, 200]
+            elif val < 35: return [255, 165, 0, 200]
+            return [200, 30, 0, 200]
 
-        if not map_data.empty:
-            # Color Logic
-            def get_color(val):
-                if val < 12: return [0, 128, 0, 160] # Green
-                elif val < 35: return [255, 165, 0, 160] # Orange
-                return [255, 0, 0, 160] # Red
+        map_df = filtered_data.copy()
+        map_df['color'] = map_df['Predicted_PM25'].apply(get_color)
+        map_df['radius'] = map_df['Predicted_PM25'].clip(lower=5) * 500  # Large visible dots
 
-            map_data['color'] = map_data['Predicted_PM25'].apply(get_color)
-            map_data['radius'] = map_data['Predicted_PM25'].clip(lower=10) * 400
+        # Smart Zoom Calculation
+        lat_min, lat_max = map_df['Lat'].min(), map_df['Lat'].max()
+        lon_min, lon_max = map_df['Lon'].min(), map_df['Lon'].max()
+        
+        # Default center
+        mid_lat = (lat_min + lat_max) / 2
+        mid_lon = (lon_min + lon_max) / 2
 
-            layer = pdk.Layer(
-                "ScatterplotLayer",
-                map_data,
-                get_position='[Lon, Lat]',
-                get_fill_color='color',
-                get_radius='radius',
-                pickable=True
-            )
+        layer = pdk.Layer(
+            "ScatterplotLayer",
+            map_df,
+            get_position='[Lon, Lat]',
+            get_fill_color='color',
+            get_radius='radius',
+            pickable=True
+        )
 
-            # Hard-coded view state fallback to ensure map isn't blank
-            view_lat = map_data['Lat'].mean()
-            view_lon = map_data['Lon'].mean()
-            
-            view_state = pdk.ViewState(
-                latitude=view_lat,
-                longitude=view_lon,
+        # Use "road" style to ensure outlines are visible
+        # Set height to 600px to avoid "minimized" look
+        st.pydeck_chart(pdk.Deck(
+            map_style=None,  # Use default style which shows states/roads clearly
+            initial_view_state=pdk.ViewState(
+                latitude=mid_lat,
+                longitude=mid_lon,
                 zoom=5,
-                pitch=0,
-            )
-
-            st.pydeck_chart(pdk.Deck(
-                map_style='mapbox://styles/mapbox/light-v9',
-                initial_view_state=view_state,
-                layers=[layer],
-                tooltip={"text": "Location: {Location_Label}\nPred: {Predicted_PM25:.1f}"}
-            ))
-        else:
-            st.warning("Data exists but lacks valid coordinates for mapping.")
+                pitch=0
+            ),
+            layers=[layer],
+            tooltip={"text": "Loc: {Location_Label}\nPred: {Predicted_PM25:.1f}"}
+        ))
     else:
-        st.info("No data available for the selected filters.")
+        st.info("No data for map.")
 
-# TAB 2: EXPLAINABILITY
+# ================= TAB 2: EXPLAINABILITY =================
 with tab_explain:
-    c_x1, c_x2 = st.columns([2, 1])
-    with c_x1:
-        st.subheader("Feature Contribution")
+    c1, c2 = st.columns([2, 1])
+    with c1:
+        st.markdown("#### Feature Contribution")
         if sensor_row is not None:
-            features = {
+            feats = {
                 "3-Day Avg": sensor_row.get('PM25_3Day_Avg', 0),
                 "Velocity": sensor_row.get('Velocity_Yesterday', 0) * 5, 
-                "Smoke Sat.": sensor_row.get('Smoke_Yesterday', 0) * 10,
+                "Smoke Sat.": sensor_row.get('Smoke_Yesterday', 0) * 10
             }
-            feat_df = pd.DataFrame(list(features.items()), columns=['Driver', 'Impact'])
+            feat_df = pd.DataFrame(list(feats.items()), columns=['Feature', 'Impact'])
             
-            chart = alt.Chart(feat_df).mark_bar().encode(
-                x='Impact',
-                y=alt.Y('Driver', sort='-x'),
+            c = alt.Chart(feat_df).mark_bar().encode(
+                x='Impact', 
+                y=alt.Y('Feature', sort='-x'),
                 color=alt.Color('Impact', scale=alt.Scale(scheme='reds'))
-            )
-            st.altair_chart(chart, use_container_width=True)
+            ).properties(height=300)
+            st.altair_chart(c, use_container_width=True)
             
-    with c_x2:
-        st.subheader("AI Narrative")
+    with c2:
+        st.markdown("#### Narrative")
         if sensor_row is not None:
-            smoke = sensor_row.get('Smoke_Yesterday', 0)
-            if smoke > 1: st.warning("Heavy smoke detected.")
-            else: st.success("Conditions stable.")
+            if sensor_row.get('Smoke_Yesterday', 0) > 1:
+                st.warning("Detected heavy smoke plumes drifting into area.")
+            elif sensor_row.get('PM25_3Day_Avg', 0) > 25:
+                st.info("Stagnant air trapping existing pollution.")
+            else:
+                st.success("Stable atmospheric conditions.")
 
-# TAB 3: DIAGNOSTICS (Fixed ValueError)
+# ================= TAB 3: DIAGNOSTICS =================
 with tab_diag:
-    st.subheader("Model Performance")
+    st.markdown("#### Global Accuracy")
     
-    # 1. Global Accuracy
-    if len(df) > 500:
-        scatter_data = df.sample(500)
-    else:
-        scatter_data = df
-        
-    scatter = alt.Chart(scatter_data).mark_circle(size=60, opacity=0.5).encode(
-        x='Actual_PM25',
-        y='Predicted_PM25',
-        tooltip=['Date', 'Actual_PM25', 'Predicted_PM25']
-    ).properties(height=350)
-    st.altair_chart(scatter, use_container_width=True)
+    # Safe sampling
+    chart_data = df.sample(min(1000, len(df)))
     
-    st.divider()
-    col_d1, col_d2 = st.columns(2)
+    scatter = alt.Chart(chart_data).mark_circle(size=60).encode(
+        x='Actual_PM25', y='Predicted_PM25', tooltip=['Date', 'Actual_PM25']
+    ).properties(height=400)
+    
+    line = alt.Chart(pd.DataFrame({'x':[0,100], 'y':[0,100]})).mark_line(color='red').encode(x='x', y='y')
+    st.altair_chart(scatter + line, use_container_width=True)
 
-    # 2. Timeline (The Chart that Crashed)
+    st.divider()
+    
+    col_d1, col_d2 = st.columns(2)
+    
     with col_d1:
-        st.markdown("#### Forecast Tracking")
+        st.markdown("#### Time Series")
         if sensor_row is not None:
             loc = sensor_row['Location_Label']
             hist = df[df['Location_Label'] == loc].sort_values('Date')
             
-            # SAFE MELT: Explicitly check columns before melting
-            if 'Actual_PM25' in hist.columns and 'Predicted_PM25' in hist.columns:
-                chart_data = hist[['Date', 'Actual_PM25', 'Predicted_PM25']].melt(
-                    id_vars=['Date'], 
-                    var_name='Type', 
-                    value_name='PM25'
-                )
-                
-                line = alt.Chart(chart_data).mark_line().encode(
-                    x='Date:T',
-                    y='PM25:Q',
-                    color='Type:N'
-                ).properties(height=300)
-                st.altair_chart(line, use_container_width=True)
-            else:
-                st.error("Missing columns for timeline visualization.")
-        else:
-            st.info("Select a sensor.")
-
-    # 3. Error Map
+            # Safe Melt
+            if 'Actual_PM25' in hist.columns:
+                m = hist.melt(id_vars=['Date'], value_vars=['Actual_PM25', 'Predicted_PM25'], value_name='PM25')
+                l = alt.Chart(m).mark_line().encode(x='Date', y='PM25', color='variable').properties(height=300)
+                st.altair_chart(l, use_container_width=True)
+    
     with col_d2:
-        st.markdown("#### Error Cartography")
-        high_err = df[df['Absolute_Error'] > 15].dropna(subset=['Lat', 'Lon'])
-        
-        if not high_err.empty:
+        st.markdown("#### Error Map")
+        errs = df[df['Absolute_Error'] > 15].dropna(subset=['Lat', 'Lon'])
+        if not errs.empty:
             err_layer = pdk.Layer(
-                "ScatterplotLayer",
-                high_err,
+                "ScatterplotLayer", errs,
                 get_position='[Lon, Lat]',
-                get_fill_color='[200, 30, 0, 180]',
-                get_radius=5000, # Large radius for visibility
-                pickable=True
+                get_fill_color='[200, 30, 0, 200]',
+                get_radius=5000, pickable=True
             )
-            
-            # Default view if empty
-            lat_view = high_err['Lat'].mean() if not high_err.empty else 38
-            lon_view = high_err['Lon'].mean() if not high_err.empty else -120
-
             st.pydeck_chart(pdk.Deck(
-                map_style='mapbox://styles/mapbox/light-v9',
-                initial_view_state=pdk.ViewState(latitude=lat_view, longitude=lon_view, zoom=4),
+                map_style=None,
+                initial_view_state=pdk.ViewState(latitude=38, longitude=-120, zoom=4),
                 layers=[err_layer],
                 tooltip={"text": "Error: {Absolute_Error:.1f}"}
             ))
         else:
-            st.success("No major errors detected.")
+            st.success("No major errors.")
