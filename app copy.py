@@ -1,4 +1,4 @@
-import streamlit as st
+ import streamlit as st
 import pandas as pd
 import numpy as np
 import zipfile
@@ -17,9 +17,10 @@ st.set_page_config(
 @st.cache_data
 def load_data():
     try:
-        # Robust Zip Loader to handle Mac hidden files
+        # Robust Zip Loader
         with zipfile.ZipFile("data.zip", "r") as z:
             all_files = z.namelist()
+            # Ignore Mac hidden files
             csv_files = [f for f in all_files if f.endswith('.csv') and not f.startswith('__MACOSX')]
             
             if not csv_files:
@@ -43,12 +44,11 @@ def load_data():
         st.error("❌ 'Date' column missing.")
         st.stop()
 
-    # 2. Location Cleaning
+    # 2. Location Cleaning (Drop invalid rows)
     df['Lat'] = pd.to_numeric(df['Lat'], errors='coerce')
     df['Lon'] = pd.to_numeric(df['Lon'], errors='coerce')
-    df = df.dropna(subset=['Lat', 'Lon']) # Drop rows without coordinates
+    df = df.dropna(subset=['Lat', 'Lon'])
 
-    # create a label
     df['Location_Label'] = df['Lat'].astype(str) + ", " + df['Lon'].astype(str)
     
     # 3. State Mapping
@@ -90,7 +90,7 @@ else:
     filtered_data = day_data
 
 if filtered_data.empty:
-    st.sidebar.warning("No data for these filters. Try a different date.")
+    st.warning("No data for these filters. Try a different date.")
 
 # C. Sensor Selector
 sensor_options = filtered_data['Location_Label'].unique()
@@ -110,38 +110,30 @@ if sensor_row is not None:
     pred = sensor_row.get('Predicted_PM25', 0)
     actual = sensor_row.get('Actual_PM25', 0)
     
-    # Status Logic (Fixed Emoji Display)
     if pred > 35: 
-        status_text = "HAZARDOUS"
-        status_color = "red"
-        emoji = "🚨"
+        status, s_color, emoji = "HAZARDOUS", "red", "🚨"
     elif pred > 12: 
-        status_text = "MODERATE"
-        status_color = "orange"
-        emoji = "⚠️"
+        status, s_color, emoji = "MODERATE", "orange", "⚠️"
     else: 
-        status_text = "SAFE"
-        status_color = "green"
-        emoji = "✅"
+        status, s_color, emoji = "SAFE", "green", "✅"
 
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Predicted PM2.5", f"{pred:.1f}")
     c2.metric("Actual PM2.5", f"{actual:.1f}", delta=f"{actual-pred:.1f}")
     c3.metric("Pollution Velocity", f"{sensor_row.get('Velocity_Yesterday', 0):.2f}")
-    # Fixed Markdown for Status
-    c4.markdown(f"### {emoji} :{status_color}[{status_text}]")
+    c4.markdown(f"### {emoji} :{s_color}[{status}]")
 
 st.divider()
 
 # --- 5. TABS INTERFACE ---
 tab_map, tab_explain, tab_diag = st.tabs(["🌍 Regional Map", "🤖 Explainability", "📊 Diagnostics"])
 
-# ================= TAB 1: MAP =================
+# ================= TAB 1: MAP (FIXED) =================
 with tab_map:
     st.subheader("Regional Air Quality Map")
     
     if not filtered_data.empty:
-        # Dynamic Colors (Green/Yellow/Red)
+        # 1. Colors (R, G, B, A)
         def get_color(val):
             if val < 12: return [0, 128, 0, 200]
             elif val < 35: return [255, 165, 0, 200]
@@ -149,13 +141,15 @@ with tab_map:
 
         map_df = filtered_data.copy()
         map_df['color'] = map_df['Predicted_PM25'].apply(get_color)
-        map_df['radius'] = map_df['Predicted_PM25'].clip(lower=5) * 500  # Visible dots
+        map_df['radius'] = map_df['Predicted_PM25'].clip(lower=5) * 500 
 
-        # Smart Zoom Calculation
-        lat_min, lat_max = map_df['Lat'].min(), map_df['Lat'].max()
-        lon_min, lon_max = map_df['Lon'].min(), map_df['Lon'].max()
-        mid_lat = (lat_min + lat_max) / 2
-        mid_lon = (lon_min + lon_max) / 2
+        # 2. View State (Auto-Zoom)
+        view_state = pdk.ViewState(
+            latitude=map_df['Lat'].mean(),
+            longitude=map_df['Lon'].mean(),
+            zoom=5,
+            pitch=0
+        )
 
         layer = pdk.Layer(
             "ScatterplotLayer",
@@ -166,19 +160,17 @@ with tab_map:
             pickable=True
         )
 
-        # FIXED Tooltip: Clean, Readable HTML
-        tooltip_html = {
-            "html": "<b>Location:</b> {Location_Label}<br/>"
-                    "<b>Predicted:</b> {Predicted_PM25}<br/>"
-                    "<b>Actual:</b> {Actual_PM25}",
-            "style": {"backgroundColor": "steelblue", "color": "white"}
-        }
-
+        # 3. FIXED TOOLTIP & STYLE
+        # Removed explicit map_style to force Streamlit default (shows states/roads)
         st.pydeck_chart(pdk.Deck(
-            map_style=None, 
-            initial_view_state=pdk.ViewState(latitude=mid_lat, longitude=mid_lon, zoom=5),
+            initial_view_state=view_state,
             layers=[layer],
-            tooltip=tooltip_html
+            tooltip={
+                "html": "<b>Location:</b> {Location_Label}<br/>"
+                        "<b>Predicted:</b> {Predicted_PM25}<br/>"
+                        "<b>Actual:</b> {Actual_PM25}",
+                "style": {"backgroundColor": "steelblue", "color": "white"}
+            }
         ))
     else:
         st.info("No data for map.")
@@ -189,7 +181,6 @@ with tab_explain:
     with c1:
         st.markdown("#### Feature Contribution")
         if sensor_row is not None:
-            # Added "Yesterday's Pollution" as requested
             feats = {
                 "Yesterday's Pollution": sensor_row.get('PM25_Yesterday', 0),
                 "3-Day Avg": sensor_row.get('PM25_3Day_Avg', 0),
@@ -202,7 +193,7 @@ with tab_explain:
                 x='Impact', 
                 y=alt.Y('Feature', sort='-x'),
                 color=alt.Color('Impact', scale=alt.Scale(scheme='reds'))
-            ).properties(height=300)
+            ).properties(height=350) # Increased height
             st.altair_chart(c, use_container_width=True)
             
     with c2:
@@ -222,38 +213,49 @@ with tab_diag:
     # Safe sampling
     if not df.empty:
         chart_data = df.sample(min(1000, len(df)))
-        
-        # Calculate dynamic max for red line
+        # Dynamic axis max
         max_val = max(chart_data['Actual_PM25'].max(), chart_data['Predicted_PM25'].max())
         
         scatter = alt.Chart(chart_data).mark_circle(size=60).encode(
             x='Actual_PM25', y='Predicted_PM25', tooltip=['Date', 'Actual_PM25']
-        ).properties(height=400)
+        ).properties(height=500) # Increased height
         
-        # FIXED Red Line: Now spans the full range of data
         line = alt.Chart(pd.DataFrame({'x':[0, max_val], 'y':[0, max_val]})).mark_line(color='red').encode(x='x', y='y')
-        
         st.altair_chart(scatter + line, use_container_width=True)
-    else:
-        st.info("No data available for accuracy plot.")
 
     st.divider()
     
     col_d1, col_d2 = st.columns(2)
     
+    # TIMELINE CHART (FIXED CRASH)
     with col_d1:
         st.markdown("#### Time Series")
         if sensor_row is not None:
             loc = sensor_row['Location_Label']
             hist = df[df['Location_Label'] == loc].sort_values('Date')
             
-            # FIXED ValueError: Check columns & non-empty before melting
-            if not hist.empty and 'Actual_PM25' in hist.columns and 'Predicted_PM25' in hist.columns:
-                m = hist.melt(id_vars=['Date'], value_vars=['Actual_PM25', 'Predicted_PM25'], value_name='PM25')
-                l = alt.Chart(m).mark_line().encode(x='Date', y='PM25', color='variable').properties(height=300)
+            # --- CRITICAL FIX: Safe Melt ---
+            # 1. Reset index to ensure flat dataframe
+            hist_clean = hist.reset_index(drop=True)
+            
+            # 2. Check cols exist
+            if 'Actual_PM25' in hist_clean.columns and 'Predicted_PM25' in hist_clean.columns:
+                # 3. Select ONLY necessary columns before melting
+                hist_mini = hist_clean[['Date', 'Actual_PM25', 'Predicted_PM25']]
+                
+                # 4. Melt
+                m = hist_mini.melt(id_vars='Date', var_name='Type', value_name='PM25')
+                
+                l = alt.Chart(m).mark_line().encode(
+                    x='Date:T', 
+                    y='PM25:Q', 
+                    color='Type:N'
+                ).properties(height=400) # Increased height
                 st.altair_chart(l, use_container_width=True)
             else:
-                st.warning("Insufficient data to generate timeline.")
+                st.error("Data missing columns for timeline.")
+        else:
+            st.info("Select a sensor.")
     
     with col_d2:
         st.markdown("#### Error Map")
@@ -266,18 +268,16 @@ with tab_diag:
                 get_radius=5000, pickable=True
             )
             
-            # Auto-center error map
-            e_view = pdk.ViewState(
-                latitude=errs['Lat'].mean(), 
-                longitude=errs['Lon'].mean(), 
+            view_err = pdk.ViewState(
+                latitude=errs['Lat'].mean(),
+                longitude=errs['Lon'].mean(),
                 zoom=4
             )
-
+            
             st.pydeck_chart(pdk.Deck(
-                map_style=None,
-                initial_view_state=e_view,
+                initial_view_state=view_err,
                 layers=[err_layer],
                 tooltip={"text": "Error: {Absolute_Error:.1f}"}
             ))
         else:
-            st.success("No major errors detected.")
+            st.success("No major errors.")
