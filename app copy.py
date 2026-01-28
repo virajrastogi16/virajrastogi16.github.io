@@ -1,171 +1,135 @@
 import streamlit as st
 import pandas as pd
+import shap
+import matplotlib.pyplot as plt
+import xgboost as xgb
 import numpy as np
-import zipfile
-import altair as alt
+import zipfile  # <--- Added to handle Mac zip files
 
-# --- 1. CONFIG & DATA LOADING ---
+# --- 1. SETUP & DATA LOADING ---
 st.set_page_config(page_title="SmokeSignal AI", layout="wide")
 
 @st.cache_data
 def load_data():
+    # We use zipfile to ignore the hidden __MACOSX folder that Mac creates
     try:
         with zipfile.ZipFile("data.zip", "r") as z:
+            # Get list of all files inside the zip
             all_files = z.namelist()
-            # Filter out Mac hidden files
+            # Filter: Find the file that ends with .csv and is NOT the Mac hidden folder
             csv_files = [f for f in all_files if f.endswith('.csv') and not f.startswith('__MACOSX')]
             
             if not csv_files:
                 st.error("Error: No CSV file found inside data.zip")
                 st.stop()
             
-            with z.open(csv_files[0]) as f:
+            # Pick the first valid CSV file found (e.g., 'final_predictions_full copy.csv')
+            target_file = csv_files[0]
+            
+            # Open that specific file
+            with z.open(target_file) as f:
                 df = pd.read_csv(f)
-                
     except FileNotFoundError:
-        st.error("CRITICAL ERROR: Could not find 'data.zip'. Check GitHub file list.")
-        st.stop()
-
-    # --- PREPROCESSING ---
-    # Create Location Label
-    if 'Lat' in df.columns and 'Lon' in df.columns:
-        df['Location_Label'] = df['Lat'].astype(str) + ", " + df['Lon'].astype(str)
-    else:
-        st.error("Missing 'Lat' or 'Lon' columns in CSV.")
+        st.error("CRITICAL ERROR: Could not find 'data.zip'. Please check GitHub file list.")
         st.stop()
     
-    # Process Dates
+    # Create a friendly "Location" label combining Lat/Lon
+    # Force Lat/Lon to string to avoid errors
+    df['Location_Label'] = df['Lat'].astype(str) + ", " + df['Lon'].astype(str)
+    
+    # Ensure Date column is standard datetime
     if 'Date' in df.columns:
         df['Date'] = pd.to_datetime(df['Date'])
-    
-    # Calculate Error if columns exist (Soft check)
-    if 'Actual_PM25' in df.columns and 'Predicted_PM25' in df.columns:
-        df['Prediction_Error'] = df['Actual_PM25'] - df['Predicted_PM25']
+    else:
+        st.error("Column 'Date' not found in the CSV.")
         
     return df
 
+# Main Data Loading Block
 try:
     df = load_data()
+    st.sidebar.success("Data System: Online ✅")
 except Exception as e:
-    st.error(f"Data Load Error: {e}")
+    st.error(f"An unexpected error occurred: {e}")
     st.stop()
 
-# --- 2. SIDEBAR CONTROLS ---
-st.sidebar.title("🌲 SmokeSignal AI")
-st.sidebar.header("Configuration")
+# --- 2. THE SIDEBAR (The Control Center) ---
+st.sidebar.title("🔍 Hazard Controls")
+st.sidebar.markdown("Filter to see specific fire events.")
 
-# Debugging Helper: Show columns if needed
-with st.sidebar.expander("⚠️ Debug: View Column Names"):
-    st.write(df.columns.tolist())
-
-# Location Selector
+# Select Location
 unique_locations = df['Location_Label'].unique()
-selected_loc = st.sidebar.selectbox("📍 Select Monitor Location:", unique_locations)
+selected_loc = st.sidebar.selectbox("Select Monitor Location:", unique_locations)
+
+# Filter Data for that Location
 loc_data = df[df['Location_Label'] == selected_loc]
 
-# Date Selector
+# Select Date
 if not loc_data.empty:
     min_date = loc_data['Date'].min()
     max_date = loc_data['Date'].max()
-    selected_date = st.sidebar.date_input("📅 Select Date:", min_value=min_date, max_value=max_date, value=min_date)
+    selected_date = st.sidebar.date_input("Select Date:", min_value=min_date, max_value=max_date, value=min_date)
+    
+    # Get specific row for that day
     specific_day = loc_data[loc_data['Date'].dt.date == selected_date]
 else:
-    st.warning("No data for this location.")
+    st.warning("No data available for this location.")
     st.stop()
 
 # --- 3. MAIN DASHBOARD ---
-st.title("🌲 West Coast SmokeSignal: AI Forecasting")
+st.title("🌲 SmokeSignal: AI Wildfire Forecaster")
 
-# Check for required columns before creating metrics
-required_cols = ['Actual_PM25', 'Predicted_PM25']
-missing_cols = [c for c in required_cols if c not in df.columns]
-
-if missing_cols:
-    st.error(f"⚠️ **Column Name Mismatch!** The code is looking for columns named: `{required_cols}`")
-    st.error(f"❌ **Missing:** {missing_cols}")
-    st.info(f"✅ **Available Columns in your CSV:** {df.columns.tolist()}")
-    st.warning("Please rename the columns in your CSV or update the code to match the names above.")
-    st.stop() # Stop execution here to prevent the crash
-
-# A. TOP METRICS
-col1, col2, col3, col4 = st.columns(4)
+# METRICS ROW
+col1, col2, col3 = st.columns(3)
 if not specific_day.empty:
-    row = specific_day.iloc[0]
+    # Use .get() to avoid errors if columns are missing
+    pred = specific_day.iloc[0].get('Predicted_PM25', 0)
+    actual = specific_day.iloc[0].get('Actual_PM25', 0)
+    error = specific_day.iloc[0].get('Error', 0)
     
-    pred = row.get('Predicted_PM25', 0)
-    actual = row.get('Actual_PM25', 0)
-    error = row.get('Prediction_Error', 0)
+    col1.metric("Predicted Air Quality (PM2.5)", f"{pred:.1f}")
+    col2.metric("Actual Air Quality", f"{actual:.1f}", delta=f"{error:.1f} error", delta_color="inverse")
     
-    if pred < 12: status_color = "green"
-    elif pred < 35: status_color = "orange"
-    else: status_color = "red"
+    # Hazard Alert Logic
+    status = "🚨 HAZARDOUS" if pred > 35 else "✅ SAFE"
+    status_color = "red" if pred > 35 else "green"
+    col3.markdown(f"### Status: :{status_color}[{status}]")
+else:
+    st.warning("No data found for this specific date.")
 
-    col1.metric("🤖 AI Forecast (PM2.5)", f"{pred:.1f}")
-    col2.metric("📉 Actual Value", f"{actual:.1f}")
-    col3.metric("⚠️ Model Error", f"{error:.1f}", delta_color="inverse")
-    col4.markdown(f"**Risk Level:** :{status_color}[**{'HAZARDOUS' if pred > 35 else 'SAFE'}**]")
+# VISUAL 1: PERFORMANCE CHART
+st.subheader("📉 Actual vs. Predicted (Time Series)")
+if not loc_data.empty:
+    chart_data = loc_data.set_index("Date")[['Actual_PM25', 'Predicted_PM25']]
+    st.line_chart(chart_data)
 
-# --- 4. ACCURACY SECTION ---
+# --- 4. EXPLAINABILITY & MAP (The "Why") ---
 st.divider()
-st.subheader("🔍 Model Diagnostics")
+col_map, col_explain = st.columns([1, 1])
 
-tab1, tab2 = st.tabs(["📉 Time Series", "🎯 Error Distribution"])
+with col_map:
+    st.subheader("📍 Monitor Location")
+    # Streamlit needs 'lat' and 'lon' columns exactly named (case sensitive)
+    # We create a copy to avoid SettingWithCopy warnings
+    map_data = loc_data[['Lat', 'Lon']].copy()
+    map_data = map_data.rename(columns={'Lat': 'lat', 'Lon': 'lon'})
+    st.map(map_data.iloc[[0]]) # Show just the one point
 
-with tab1:
-    # SAFE MELT: We already checked columns exist above, so this is now safe
-    chart_data = loc_data.melt(id_vars=['Date'], value_vars=['Actual_PM25', 'Predicted_PM25'], var_name='Type', value_name='PM25')
+with col_explain:
+    st.subheader("🤖 Why is the air bad?")
     
-    line_chart = alt.Chart(chart_data).mark_line().encode(
-        x='Date:T',
-        y='PM25:Q',
-        color=alt.Color('Type', scale=alt.Scale(domain=['Actual_PM25', 'Predicted_PM25'], range=['#1f77b4', '#d62728'])),
-        tooltip=['Date', 'Type', 'PM25']
-    ).properties(height=350, title="Actual vs Predicted")
-    
-    st.altair_chart(line_chart, use_container_width=True)
-
-with tab2:
-    if 'Prediction_Error' in loc_data.columns:
-        residual_chart = alt.Chart(loc_data).mark_bar().encode(
-            x='Date:T',
-            y='Prediction_Error:Q',
-            color=alt.condition(
-                alt.datum.Prediction_Error > 0,
-                alt.value("orange"),
-                alt.value("blue")
-            ),
-            tooltip=['Date', 'Prediction_Error']
-        ).properties(height=300)
-        st.altair_chart(residual_chart, use_container_width=True)
-
-# --- 5. EXPLAINABILITY ---
-st.divider()
-st.subheader("🧠 XAI: Explainability Engine")
-
-col_xai_1, col_xai_2 = st.columns([1, 2])
-
-with col_xai_1:
     if not specific_day.empty:
-        # Robust .get() calls so it won't crash if these explainability columns are missing
-        smoke_val = row.get('Smoke_Yesterday', 0)
-        velocity_val = row.get('Velocity_Yesterday', 0)
+        # Simulate explainability based on features
+        smoke_val = specific_day.iloc[0].get('Smoke_Yesterday', 0)
+        velocity_val = specific_day.iloc[0].get('Velocity_Yesterday', 0)
         
-        st.markdown("**🔥 Smoke Intensity (Yesterday)**")
-        st.progress(min(smoke_val / 4.0, 1.0))
-        st.caption(f"Value: {smoke_val}")
-
-with col_xai_2:
-    # Feature Importance Chart
-    features = {
-        "Smoke Density (Lag 1)": row.get('Smoke_Yesterday', 0) * 10, 
-        "Pollution Velocity": row.get('Velocity_Yesterday', 0),
-        "Local Trends": row.get('Actual_PM25', 0) * 0.5 
-    }
-    feat_df = pd.DataFrame(list(features.items()), columns=['Feature', 'Impact_Score'])
-    
-    bar_chart = alt.Chart(feat_df).mark_bar().encode(
-        x='Impact_Score:Q',
-        y=alt.Y('Feature:N', sort='-x'),
-        color=alt.Color('Impact_Score', scale=alt.Scale(scheme='reds'))
-    )
-    st.altair_chart(bar_chart, use_container_width=True)
+        st.write(f"**Key Driver Analysis:**")
+        st.info(f"💨 **Smoke Intensity (Yesterday):** {smoke_val} (Scale 0-3)")
+        st.info(f"📈 **Pollution Velocity:** {velocity_val:.1f} (Rate of change)")
+        
+        if smoke_val > 0:
+            st.warning(" The AI detected significant smoke plumes yesterday, driving the risk up.")
+        elif velocity_val > 10:
+            st.warning(" Pollution is rising rapidly (High Velocity), suggesting a new ignition.")
+        else:
+            st.success(" Factors suggest stable atmospheric conditions.")
