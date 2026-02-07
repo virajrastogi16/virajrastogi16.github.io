@@ -4,6 +4,7 @@ import numpy as np
 import zipfile
 import altair as alt
 import pydeck as pdk
+import datetime
 
 # --- 1. PAGE CONFIGURATION ---
 st.set_page_config(
@@ -20,7 +21,6 @@ def load_data():
         # Robust Zip Loader
         with zipfile.ZipFile("data.zip", "r") as z:
             all_files = z.namelist()
-            # Ignore Mac hidden files
             csv_files = [f for f in all_files if f.endswith('.csv') and not f.startswith('__MACOSX')]
             
             if not csv_files:
@@ -35,7 +35,7 @@ def load_data():
         st.stop()
 
     # --- CLEANING ---
-    df.columns = df.columns.str.strip() # Remove spaces from column names
+    df.columns = df.columns.str.strip()
 
     # 1. Date Parsing
     if 'Date' in df.columns:
@@ -44,7 +44,7 @@ def load_data():
         st.error("❌ 'Date' column missing.")
         st.stop()
 
-    # 2. Location Cleaning (Drop invalid rows)
+    # 2. Location Cleaning
     df['Lat'] = pd.to_numeric(df['Lat'], errors='coerce')
     df['Lon'] = pd.to_numeric(df['Lon'], errors='coerce')
     df = df.dropna(subset=['Lat', 'Lon'])
@@ -71,16 +71,32 @@ except Exception as e:
     st.error(f"Data Loading Error: {e}")
     st.stop()
 
-# --- 3. SIDEBAR CONTROLS ---
+# --- 3. SIDEBAR CONTROLS (UPDATED FOR DEFAULT DATE) ---
 st.sidebar.title("🔍 Controls")
 
-# A. Date Filter (Default to LATEST to ensure visibility)
+# A. Date Filter (Defaults to Aug 31, 2023 for demo)
 min_d, max_d = df['Date'].min(), df['Date'].max()
-selected_date = st.sidebar.date_input("Analysis Date:", value=max_d, min_value=min_d, max_value=max_d)
 
-# B. State Filter
+# --- TARGET DATE SETTING ---
+target_default = datetime.date(2023, 8, 31)
+# Check if target is valid, otherwise fallback to max date
+if min_d.date() <= target_default <= max_d.date():
+    default_date = target_default
+else:
+    default_date = max_d
+
+selected_date = st.sidebar.date_input("Analysis Date:", value=default_date, min_value=min_d, max_value=max_d)
+
+# B. State Filter (Default to California for demo)
 state_options = ['All'] + sorted(df['State_Name'].unique().tolist())
-selected_state = st.sidebar.selectbox("Filter by State:", state_options)
+
+# Try to set default index to California if it exists
+try:
+    default_state_idx = state_options.index("California (CA)")
+except ValueError:
+    default_state_idx = 0
+
+selected_state = st.sidebar.selectbox("Filter by State:", state_options, index=default_state_idx)
 
 # Filter Logic
 day_data = df[df['Date'].dt.date == selected_date]
@@ -128,12 +144,12 @@ st.divider()
 # --- 5. TABS INTERFACE ---
 tab_map, tab_explain, tab_diag = st.tabs(["🌍 Regional Map", "🤖 Explainability", "📊 Diagnostics"])
 
-# ================= TAB 1: MAP (FIXED) =================
+# ================= TAB 1: MAP =================
 with tab_map:
     st.subheader("Regional Air Quality Map")
     
     if not filtered_data.empty:
-        # 1. Colors (R, G, B, A)
+        # 1. Colors
         def get_color(val):
             if val < 12: return [0, 128, 0, 200]
             elif val < 35: return [255, 165, 0, 200]
@@ -143,7 +159,7 @@ with tab_map:
         map_df['color'] = map_df['Predicted_PM25'].apply(get_color)
         map_df['radius'] = map_df['Predicted_PM25'].clip(lower=5) * 500 
 
-        # 2. View State (Auto-Zoom)
+        # 2. View State
         view_state = pdk.ViewState(
             latitude=map_df['Lat'].mean(),
             longitude=map_df['Lon'].mean(),
@@ -160,8 +176,7 @@ with tab_map:
             pickable=True
         )
 
-        # 3. FIXED TOOLTIP & STYLE
-        # Removed explicit map_style to force Streamlit default (shows states/roads)
+        # 3. Chart
         st.pydeck_chart(pdk.Deck(
             initial_view_state=view_state,
             layers=[layer],
@@ -193,7 +208,7 @@ with tab_explain:
                 x='Impact', 
                 y=alt.Y('Feature', sort='-x'),
                 color=alt.Color('Impact', scale=alt.Scale(scheme='reds'))
-            ).properties(height=350) # Increased height
+            ).properties(height=350)
             st.altair_chart(c, use_container_width=True)
             
     with c2:
@@ -213,12 +228,11 @@ with tab_diag:
     # Safe sampling
     if not df.empty:
         chart_data = df.sample(min(1000, len(df)))
-        # Dynamic axis max
         max_val = max(chart_data['Actual_PM25'].max(), chart_data['Predicted_PM25'].max())
         
         scatter = alt.Chart(chart_data).mark_circle(size=60).encode(
             x='Actual_PM25', y='Predicted_PM25', tooltip=['Date', 'Actual_PM25']
-        ).properties(height=500) # Increased height
+        ).properties(height=500)
         
         line = alt.Chart(pd.DataFrame({'x':[0, max_val], 'y':[0, max_val]})).mark_line(color='red').encode(x='x', y='y')
         st.altair_chart(scatter + line, use_container_width=True)
@@ -227,30 +241,21 @@ with tab_diag:
     
     col_d1, col_d2 = st.columns(2)
     
-    # TIMELINE CHART (FIXED CRASH)
     with col_d1:
         st.markdown("#### Time Series")
         if sensor_row is not None:
             loc = sensor_row['Location_Label']
             hist = df[df['Location_Label'] == loc].sort_values('Date')
             
-            # --- CRITICAL FIX: Safe Melt ---
-            # 1. Reset index to ensure flat dataframe
+            # SAFE MELT
             hist_clean = hist.reset_index(drop=True)
-            
-            # 2. Check cols exist
             if 'Actual_PM25' in hist_clean.columns and 'Predicted_PM25' in hist_clean.columns:
-                # 3. Select ONLY necessary columns before melting
                 hist_mini = hist_clean[['Date', 'Actual_PM25', 'Predicted_PM25']]
-                
-                # 4. Melt
                 m = hist_mini.melt(id_vars='Date', var_name='Type', value_name='PM25')
                 
                 l = alt.Chart(m).mark_line().encode(
-                    x='Date:T', 
-                    y='PM25:Q', 
-                    color='Type:N'
-                ).properties(height=400) # Increased height
+                    x='Date:T', y='PM25:Q', color='Type:N'
+                ).properties(height=400)
                 st.altair_chart(l, use_container_width=True)
             else:
                 st.error("Data missing columns for timeline.")
